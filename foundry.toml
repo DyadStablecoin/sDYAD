@@ -7,3 +7,4 @@ libs = ["lib"]
 
 [dependencies]
 solady = "0.0.227"
+solmate = "6.7.0"
