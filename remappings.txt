@@ -1,2 +1,3 @@
+@solady=dependencies/solady-0.0.227/src
 @solady-0.0.227=dependencies/solady-0.0.227
 @solmate-6.7.0=dependencies/solmate-6.7.0
