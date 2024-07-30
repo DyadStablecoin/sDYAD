@@ -7,6 +7,17 @@ interface IDyad {
 
   function balanceOf(address account) external view returns (uint);
 
+  function transferFrom(
+      address sender, 
+      address recipient, 
+      uint    amount
+  ) external returns (bool);
+
+  function transfer(
+      address recipient, 
+      uint    amount
+  ) external returns (bool);
+
  /**
   * @notice Mints amount of DYAD through a dNFT and licensed vault manager 
   *         to a specified address.

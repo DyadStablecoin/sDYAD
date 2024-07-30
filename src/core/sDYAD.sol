@@ -34,6 +34,13 @@ contract sDYAD is ERC4626, UUPSUpgradeable, Ownable {
         return "sDYAD";
     }
 
+    function mint(
+        address to,
+        uint amount
+    ) external onlyOwner {
+        _mint(to, amount);
+    }
+
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyOwner {}

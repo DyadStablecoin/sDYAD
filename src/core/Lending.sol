@@ -7,10 +7,12 @@ import {IVault}        from "../interfaces/IVault.sol";
 import {IAggregatorV3} from "../interfaces/IAggregatorV3.sol";
 
 import {FixedPointMathLib} from "@solmate-6.7.0/src/utils/FixedPointMathLib.sol";
+import {ERC20}             from "@solmate-6.7.0/src/tokens/ERC20.sol";
+import {SafeTransferLib}   from "@solmate-6.7.0/src/utils/SafeTransferLib.sol";
 import {SafeCast}          from "@openzeppelin-contracts-5.0.2/utils/math/SafeCast.sol";
 
-
 contract Lending {
+  using SafeTransferLib   for ERC20;
   using FixedPointMathLib for uint;
   using SafeCast          for int;
 
@@ -22,6 +24,7 @@ contract Lending {
 
   IDyad public dyad;
   sDYAD public sDyad;
+  ERC20 public weth;
   uint  public totalDyadBorrowed;
   uint  public dyadInVault;
   uint  public totalCollatValue;
@@ -38,11 +41,49 @@ contract Lending {
   constructor(
     IDyad         _dyad,
     sDYAD         _sDyad,
+    ERC20         _weth,
     IAggregatorV3 _oracle
   ) {
     dyad   = _dyad;
     sDyad  = _sDyad;
+    weth   = _weth;
     oracle = _oracle;
+  }
+
+  function lend(uint dyadAmount)
+    external 
+  {
+    dyad.transferFrom(msg.sender, address(this), dyadAmount);
+    dyadInVault += dyadAmount;
+    sDyad.mint(msg.sender, dyadAmount);
+  }
+
+  function addCollat(uint wethAmount)
+    external 
+  {
+    weth.safeTransferFrom(msg.sender, address(this), wethAmount);
+    loans[msg.sender].collat += wethAmount;
+  }
+
+  function borrow(uint dyadAmount)
+    external 
+  {
+    uint ethCollat   = loans[msg.sender].collat;
+    uint collatValue = ethCollat.mulWadDown(ethPrice());
+
+    require(collatValue >= dyadAmount, "Insufficient collateral");
+
+    uint interestRate = interest(dyadAmount);
+
+    loans[msg.sender].debt            += dyadAmount;
+    loans[msg.sender].interest         = interestRate;
+    loans[msg.sender].lastPaymentTime  = block.timestamp;
+
+    totalDyadBorrowed += dyadAmount;
+    dyadInVault       -= dyadAmount;
+    totalCollatValue  += collatValue;
+
+    dyad.transfer(msg.sender, dyadAmount);
   }
 
   function interest(uint dyadAmount) 
