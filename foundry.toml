@@ -9,3 +9,4 @@ solc_version = "0.8.25"
 [dependencies]
 solady = "0.0.227"
 solmate = "6.7.0"
+"@openzeppelin-contracts" = "5.0.2"
