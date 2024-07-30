@@ -18,8 +18,9 @@ contract Lending {
 
   error StaleData();
 
-  uint          public constant  K = 0.1e18;
+  uint          public constant  K                  = 0.1e18;
   uint          public constant  STALE_DATA_TIMEOUT = 90 minutes; 
+  uint          public constant  INTEREST_PERIOD    = 1 days;
   IAggregatorV3 public immutable oracle;
 
   IDyad public dyad;
@@ -55,7 +56,7 @@ contract Lending {
   {
     dyad.transferFrom(msg.sender, address(this), dyadAmount);
     dyadInVault += dyadAmount;
-    sDyad.mint(msg.sender, dyadAmount);
+    sDyad.deposit(dyadAmount, msg.sender);
   }
 
   function addCollat(uint wethAmount)
@@ -84,6 +85,41 @@ contract Lending {
     totalCollatValue  += collatValue;
 
     dyad.transfer(msg.sender, dyadAmount);
+  }
+
+  function repayDyad(uint amount)
+    external
+  {
+    Loan storage loan = loans[msg.sender];
+    uint interestDue = (loan.debt * loan.interest) 
+                        * (block.timestamp - loan.lastPaymentTime) 
+                        / INTEREST_PERIOD;
+    require(amount >= interestDue);
+
+    uint repaymentAmount = amount - interestDue;
+    loan.debt         -= repaymentAmount;
+    totalDyadBorrowed -= repaymentAmount;
+    dyadInVault       += repaymentAmount;
+
+    dyad.transferFrom(msg.sender, address(this), repaymentAmount);
+  }
+
+  function defaultLoan() 
+    external
+  {
+    Loan storage loan = loans[msg.sender];
+    require(loan.debt > 0);
+    require(block.timestamp > loan.lastPaymentTime + INTEREST_PERIOD);
+
+    dyad.transferFrom(msg.sender, address(this), loan.debt);
+
+    totalCollatValue -= loan.collat;
+    loan.collat          = 0;
+    loan.debt            = 0;
+    loan.interest        = 0;
+    loan.lastPaymentTime = 0;
+
+    // sDyad.withdraw(loan.debt, msg.sender);
   }
 
   function interest(uint dyadAmount) 
