@@ -6,7 +6,6 @@ import {ERC4626} from "@solady/tokens/ERC4626.sol";
 import {UUPSUpgradeable} from "@solady/utils/UUPSUpgradeable.sol";
 
 contract sDYAD is ERC4626, UUPSUpgradeable, Ownable {
-
     address constant DYAD = 0xFd03723a9A3AbE0562451496a9a394D2C4bad4ab;
 
     uint8 version;
@@ -34,14 +33,9 @@ contract sDYAD is ERC4626, UUPSUpgradeable, Ownable {
         return "sDYAD";
     }
 
-    function mint(
-        address to,
-        uint amount
-    ) external onlyOwner {
+    function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }
 
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }

@@ -10,20 +10,20 @@ import {IDyad} from "../../src/interfaces/IDyad.sol";
 import {IVault} from "../../src/interfaces/IVault.sol";
 
 contract LendingTest is Test, Parameters {
-  Lending public lending;
+    Lending public lending;
 
-  // function setUp() public {
-  //   sDYAD sDyad = new sDYAD();
+    // function setUp() public {
+    //   sDYAD sDyad = new sDYAD();
 
-  //   lending = new Lending(
-  //     IDyad(MAINNET_V2_DYAD),
-  //     sDyad,
-  //     IVault(MAINNET_V2_WETH_VAULT)
-  //   );
-  // }
+    //   lending = new Lending(
+    //     IDyad(MAINNET_V2_DYAD),
+    //     sDyad,
+    //     IVault(MAINNET_V2_WETH_VAULT)
+    //   );
+    // }
 
-  // function testA() public {
-  //   uint interest = lending.interest(0);
-  //   console.log("Interest Rate: %d", interest);
-  // }
+    // function testA() public {
+    //   uint interest = lending.interest(0);
+    //   console.log("Interest Rate: %d", interest);
+    // }
 }
