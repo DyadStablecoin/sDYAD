@@ -94,7 +94,7 @@ contract Lending {
         dyad.transfer(msg.sender, dyadAmount);
     }
 
-    function repayDyad(uint256 amount) external {
+    function payInterest(uint256 amount) external {
         Loan storage loan = loans[msg.sender];
         uint256 interestDue = (loan.debt * loan.interest) * (block.timestamp - loan.lastPaymentTime) / INTEREST_PERIOD;
         require(amount >= interestDue);
