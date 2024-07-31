@@ -17,6 +17,8 @@ contract Lending {
     using SafeCast for int256;
 
     error StaleData();
+    error ZeroBorrow();
+    error InsufficientCollateral();
 
     uint256 public constant K = 0.1e18;
     uint256 public constant STALE_DATA_TIMEOUT = 90 minutes;
@@ -58,45 +60,36 @@ contract Lending {
         oracle = _oracle;
     }
 
-    function lend(uint256 dyadAmount) external {
-        dyad.transferFrom(msg.sender, address(this), dyadAmount);
-        dyadInVault += dyadAmount;
-        sDyad.deposit(dyadAmount, msg.sender);
+    function borrow(uint256 dyadAmount) external payable {
+        uint256 ethCollat = msg.value;
 
-        updateInterest();
-
-        Lender storage lender = lenders[msg.sender];
-        lender.dyadDeposited += dyadAmount;
-        lender.lastGlobalInterestRate = globalInterestRate;
-        uint256 newInterestRate = globalInterestRate - lender.lastGlobalInterestRate;
-        lender.interestEarned += lender.dyadDeposited.mulWadDown(newInterestRate);
-    }
-
-    function addCollat(uint256 wethAmount) external {
-        weth.safeTransferFrom(msg.sender, address(this), wethAmount);
-        loans[msg.sender].collat += wethAmount;
-    }
-
-    function borrow(uint256 dyadAmount) external {
-        uint256 ethCollat = loans[msg.sender].collat;
+        if (dyadAmount == 0) {
+            revert ZeroBorrow();
+        }
+        // TODO: wrap the eth to WETH
         uint256 collatValue = ethCollat.mulWadDown(ethPrice());
 
-        require(collatValue >= dyadAmount, "Insufficient collateral");
+        if (collatValue < dyadAmount) {
+            revert InsufficientCollateral();
+        }
 
         uint256 interestRate = interest(dyadAmount);
+
+        // TODO: mint bond NFT to borrower;
 
         loans[msg.sender].debt += dyadAmount;
         loans[msg.sender].interest = interestRate;
         loans[msg.sender].lastPaymentTime = block.timestamp;
+        
+        totalCollatValue += ethCollat;
 
-        totalDyadBorrowed += dyadAmount;
-        dyadInVault -= dyadAmount;
-        totalCollatValue += collatValue;
-
-        dyad.transfer(msg.sender, dyadAmount);
+        sDyad.borrow(dyadAmount, msg.sender);
     }
 
     function payInterest(uint256 amount) external {
+        // TODO: the amount should attach the interest to the bond ID as a
+        // prepayment/stream of interest for the bond. The interest should be
+        // transferred to the vault.
         Loan storage loan = loans[msg.sender];
         uint256 interestDue = (loan.debt * loan.interest) * (block.timestamp - loan.lastPaymentTime) / INTEREST_PERIOD;
         require(amount >= interestDue);
@@ -156,13 +149,14 @@ contract Lending {
     }
 
     function interest(uint256 dyadAmount) public view returns (uint256) {
-        uint256 newTotalDyadBorrowed = totalDyadBorrowed + dyadAmount;
+        
+        uint256 newTotalDyadBorrowed = sDyad.totalBorrowed() + dyadAmount;
 
         // totalDyadDeployed^2
         uint256 totalDyadBorrowdSquared = newTotalDyadBorrowed.mulWadDown(newTotalDyadBorrowed);
 
         // (totalDyadDeployed^2) / dyadInVault
-        uint256 ratio = totalDyadBorrowdSquared.divWadDown(dyadInVault);
+        uint256 ratio = totalDyadBorrowdSquared.divWadDown(dyad.balanceOf(address(sDyad)));
 
         // k * ratio
         uint256 result = K.mulWadDown(ratio);
