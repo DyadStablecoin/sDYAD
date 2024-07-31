@@ -72,12 +72,12 @@ contract Lending {
         lender.interestEarned += lender.dyadDeposited.mulWadDown(newInterestRate);
     }
 
-    function addCollat(uint256 wethAmount) external {
+    function addCollat(uint256 wethAmount) public {
         weth.safeTransferFrom(msg.sender, address(this), wethAmount);
         loans[msg.sender].collat += wethAmount;
     }
 
-    function borrow(uint256 dyadAmount) external {
+    function borrow(uint256 dyadAmount) public {
         uint256 ethCollat = loans[msg.sender].collat;
         uint256 collatValue = ethCollat.mulWadDown(ethPrice());
 
@@ -94,6 +94,11 @@ contract Lending {
         totalCollatValue += collatValue;
 
         dyad.transfer(msg.sender, dyadAmount);
+    }
+
+    function addCollatAndBorrow(uint256 wethAmount, uint256 dyadAmount) external {
+        addCollat(wethAmount);
+        borrow(dyadAmount);
     }
 
     function payInterest(uint256 amount) external {
