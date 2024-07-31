@@ -20,7 +20,7 @@ contract Lending {
 
     uint256 public constant K = 0.1e18;
     uint256 public constant STALE_DATA_TIMEOUT = 90 minutes;
-    uint256 public constant INTEREST_PERIOD = 1 days;
+    uint256 public constant INTEREST_PERIOD = 30 days;
     IAggregatorV3 public immutable oracle;
 
     IDyad public dyad;
@@ -109,14 +109,20 @@ contract Lending {
         dyad.transferFrom(msg.sender, address(this), repaymentAmount);
     }
 
-    function defaultLoan(address receiver) external {
-        Loan storage loan = loans[msg.sender];
+    function liquidate(address borrower, address receiver) external {
+        Loan storage loan = loans[borrower];
         require(loan.debt > 0);
         require(block.timestamp > loan.lastPaymentTime + INTEREST_PERIOD);
 
-        dyad.transferFrom(msg.sender, address(this), loan.debt);
+        uint256 interestDue = (loan.debt * loan.interest) * (block.timestamp - loan.lastPaymentTime) / INTEREST_PERIOD;
+        uint256 totalDue = loan.debt + interestDue;
+
+        dyad.transferFrom(msg.sender, address(this), totalDue);
+
+        weth.safeTransfer(receiver, loan.collat);
 
         totalCollatValue -= loan.collat;
+
         loan.collat = 0;
         loan.debt = 0;
         loan.interest = 0;
