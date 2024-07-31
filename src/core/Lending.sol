@@ -21,11 +21,13 @@ contract Lending {
     uint256 public constant K = 0.1e18;
     uint256 public constant STALE_DATA_TIMEOUT = 90 minutes;
     uint256 public constant INTEREST_PERIOD = 30 days;
+
     IAggregatorV3 public immutable oracle;
 
     IDyad public dyad;
     sDYAD public sDyad;
     ERC20 public weth;
+
     uint256 public totalDyadBorrowed;
     uint256 public dyadInVault;
     uint256 public totalCollatValue;
@@ -109,6 +111,20 @@ contract Lending {
         dyad.transferFrom(msg.sender, address(this), repaymentAmount);
     }
 
+    function collectInterest() external {
+        updateInterest();
+
+        Lender storage lender = lenders[msg.sender];
+        uint256 accumaledInterest = lender.dyadDeposited.mulWadDown(globalInterestRate - lender.lastGlobalInterestRate);
+        lender.interestEarned += accumaledInterest;
+        lender.lastGlobalInterestRate = globalInterestRate;
+
+        uint256 interestToCollect = lender.interestEarned;
+
+        lender.interestEarned = 0;
+        dyad.transfer(msg.sender, interestToCollect);
+    }
+
     function liquidate(address borrower, address receiver) external {
         Loan storage loan = loans[borrower];
         require(loan.debt > 0);
@@ -131,18 +147,12 @@ contract Lending {
         sDyad.withdraw(loan.debt, receiver, msg.sender);
     }
 
-    function collectInterest() external {
-        updateInterest();
-
-        Lender storage lender = lenders[msg.sender];
-        uint256 accumaledInterest = lender.dyadDeposited.mulWadDown(globalInterestRate - lender.lastGlobalInterestRate);
-        lender.interestEarned += accumaledInterest;
-        lender.lastGlobalInterestRate = globalInterestRate;
-
-        uint256 interestToCollect = lender.interestEarned;
-
-        lender.interestEarned = 0;
-        dyad.transfer(msg.sender, interestToCollect);
+    function updateInterest() internal {
+        if (block.timestamp > lastInterestUpdateTime) {
+            uint256 timeElapsed = block.timestamp - lastInterestUpdateTime;
+            globalInterestRate += timeElapsed * K;
+            lastInterestUpdateTime = block.timestamp;
+        }
     }
 
     function interest(uint256 dyadAmount) public view returns (uint256) {
@@ -159,14 +169,6 @@ contract Lending {
 
         // final result: (k * (totalDyadDeployed^2)) / (dyadInVault * totalCollatValue)
         return result.divWadDown(totalCollatValue);
-    }
-
-    function updateInterest() internal {
-        if (block.timestamp > lastInterestUpdateTime) {
-            uint256 timeElapsed = block.timestamp - lastInterestUpdateTime;
-            globalInterestRate += timeElapsed * K;
-            lastInterestUpdateTime = block.timestamp;
-        }
     }
 
     function ethPrice() public view returns (uint256) {
