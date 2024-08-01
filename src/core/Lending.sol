@@ -13,6 +13,8 @@ import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 import {SafeCast} from "@openzeppelin-contracts-5.0.2/utils/math/SafeCast.sol";
 import {ERC721} from "@solady/tokens/ERC721.sol";
 import {ITokenRenderer} from "../interfaces/ITokenRenderer.sol";
+import {Bond, BondType} from "./Structs.sol";
+
 contract Lending is ERC721 {
     using FixedPointMathLib for uint256;
     using SafeCast for int256;
@@ -30,30 +32,9 @@ contract Lending is ERC721 {
     IWETH public weth;
     ITokenRenderer public renderer;
 
-    uint256 public totalDyadBorrowed;
-    uint256 public dyadInVault;
-    uint256 public totalCollatValue;
-
-    uint256 public globalInterestRate;
-    uint256 public lastInterestUpdateTime;
-
     uint256 public totalSupply;
 
-    struct Lender {
-        uint256 dyadDeposited;
-        uint256 lastGlobalInterestRate;
-        uint256 interestEarned;
-    }
-
-    struct Loan {
-        uint256 collat;
-        uint256 debt;
-        uint256 interest;
-        uint256 lastPaymentTime;
-    }
-
-    mapping(address => Loan) public loans;
-    mapping(address => Lender) public lenders;
+    mapping(uint256 => Bond) public bondDetails;
 
     constructor(IDyad _dyad, sDYAD _sDyad, IWETH _weth, IAggregatorV3 _oracle, ITokenRenderer _renderer) {
         dyad = _dyad;
@@ -79,110 +60,86 @@ contract Lending is ERC721 {
         return renderer.tokenURI(id);
     }
 
-    function lend(uint256 dyadAmount) external {
-        dyad.transferFrom(msg.sender, address(this), dyadAmount);
-        dyadInVault += dyadAmount;
-        sDyad.deposit(dyadAmount, msg.sender);
-
-        updateInterest();
-
-        Lender storage lender = lenders[msg.sender];
-        lender.dyadDeposited += dyadAmount;
-        lender.lastGlobalInterestRate = globalInterestRate;
-        uint256 newInterestRate = globalInterestRate - lender.lastGlobalInterestRate;
-        lender.interestEarned += lender.dyadDeposited.mulWad(newInterestRate);
-    }
-
-    function borrow(uint256 dyadAmount) public payable {
+    function borrow(uint256 dyadAmount, BondType bondType) public payable {
         weth.deposit{value: msg.value}();
-        _borrow(dyadAmount);
+        _borrow(dyadAmount, msg.value, bondType);
     }
 
-    function borrow(uint256 dyadAmount, uint256 wethAmount) public {
-        SafeTransferLib.safeTransferFrom(address(weth), msg.sender, address(this));
-        _borrow(dyadAmount, wethAmount);
+    function borrow(uint256 dyadAmount, uint256 wethAmount, BondType bondType) public {
+        SafeTransferLib.safeTransferFrom(address(weth), msg.sender, address(this), wethAmount);
+        _borrow(dyadAmount, wethAmount, bondType);
     }
 
-    function _borrow(uint256 dyadAmount, uint256 collatAmount) private {
-        uint256 ethCollat = loans[msg.sender].collat;
-        uint256 collatValue = ethCollat.mulWad(ethPrice());
+    function _borrow(uint256 dyadAmount, uint256 collatAmount, BondType bondType) private {
+
+        uint256 collatValue = collatAmount.mulWad(ethPrice());
 
         require(collatValue >= dyadAmount, "Insufficient collateral");
 
         uint256 interestRate = interest(dyadAmount);
+        
+        uint256 initialInterest = dyadAmount.mulWad(interestRate).mulDiv(7 days, 365 days);
 
-        loans[msg.sender].debt += dyadAmount;
-        loans[msg.sender].interest = interestRate;
-        loans[msg.sender].lastPaymentTime = block.timestamp;
+        uint256 tokenId = ++totalSupply;
 
-        totalDyadBorrowed += dyadAmount;
-        dyadInVault -= dyadAmount;
-        totalCollatValue += collatValue;
+        bondDetails[tokenId] = Bond({
+            collat: uint96(collatAmount),
+            totalBorrowed: uint96(dyadAmount + initialInterest),
+            interestRate: uint64(interestRate),
+            interest: uint96(initialInterest),
+            lastPaymentTime: uint40(block.timestamp),
+            bondType: bondType
+        });
 
-        dyad.transfer(msg.sender, dyadAmount);
-        _mint(msg.sender, ++totalSupply);
+        sDyad.borrow(dyadAmount, msg.sender);
+        _mint(msg.sender, tokenId);
     }
 
-    function payInterest(uint256 amount) external {
-        Loan storage loan = loans[msg.sender];
-        uint256 interestDue = (loan.debt * loan.interest) * (block.timestamp - loan.lastPaymentTime) / INTEREST_PERIOD;
-        require(amount >= interestDue);
+    function payInterest(uint256 loanId, uint256 amount) external {
+        Bond storage bond = bondDetails[loanId];
 
-        uint256 repaymentAmount = amount - interestDue;
-        loan.debt -= repaymentAmount;
-        totalDyadBorrowed -= repaymentAmount;
-        dyadInVault += repaymentAmount;
+        // Must be an active bond
+        require(bond.totalBorrowed > 0);
+        
+        uint256 interestDue = _interestDue(bond);
+        uint256 totalInterestPaid = bond.interest + amount;
 
-        globalInterestRate += interestDue.divWad(dyadInVault);
+        // Must pay at least the interest due
+        // technically if this condition is not true the bond
+        // has defaulted and not been liquidated yet
+        require(totalInterestPaid < interestDue); 
 
-        dyad.transferFrom(msg.sender, address(this), repaymentAmount);
+        bond.interest = uint96(totalInterestPaid - interestDue);
+
+        dyad.transferFrom(msg.sender, address(sDyad), amount);
     }
 
-    function collectInterest() external {
-        updateInterest();
-
-        Lender storage lender = lenders[msg.sender];
-        uint256 accumaledInterest = lender.dyadDeposited.mulWad(globalInterestRate - lender.lastGlobalInterestRate);
-        lender.interestEarned += accumaledInterest;
-        lender.lastGlobalInterestRate = globalInterestRate;
-
-        uint256 interestToCollect = lender.interestEarned;
-
-        lender.interestEarned = 0;
-        dyad.transfer(msg.sender, interestToCollect);
+    function _interestDue(Bond storage bond) internal view returns (uint256) {
+        return uint256(bond.totalBorrowed)
+            .mulWad(bond.interestRate)
+            .mulDiv(block.timestamp - bond.lastPaymentTime, 365 days);
     }
 
-    function liquidate(address borrower, address receiver) external {
-        Loan storage loan = loans[borrower];
-        require(loan.debt > 0);
-        require(block.timestamp > loan.lastPaymentTime + INTEREST_PERIOD);
+    function liquidate(uint256 loanId, address receiver) external {
+        Bond storage bond = bondDetails[loanId];
+        require(bond.totalBorrowed > 0);
+        require(block.timestamp > bond.lastPaymentTime + INTEREST_PERIOD);
 
-        uint256 interestDue = (loan.debt * loan.interest) * (block.timestamp - loan.lastPaymentTime) / INTEREST_PERIOD;
-        uint256 totalDue = loan.debt + interestDue;
+        uint256 interestDue = _interestDue(bond);
+        uint256 totalDue = bond.totalBorrowed + interestDue - bond.interest;
 
         dyad.transferFrom(msg.sender, address(this), totalDue);
+        SafeTransferLib.safeTransfer(address(weth), receiver, bond.collat);
 
-        SafeTransferLib.safeTransfer(address(weth), receiver, loan.collat);
-
-        totalCollatValue -= loan.collat;
-
-        loan.collat = 0;
-        loan.debt = 0;
-        loan.interest = 0;
-        loan.lastPaymentTime = 0;
-
-        sDyad.withdraw(loan.debt, receiver, msg.sender);
-    }
-
-    function updateInterest() internal {
-        if (block.timestamp > lastInterestUpdateTime) {
-            uint256 timeElapsed = block.timestamp - lastInterestUpdateTime;
-            globalInterestRate += timeElapsed * K;
-            lastInterestUpdateTime = block.timestamp;
-        }
+        delete bondDetails[loanId];
     }
 
     function interest(uint256 dyadAmount) public view returns (uint256) {
+
+        uint256 totalDyadBorrowed = sDyad.totalBorrowed();
+        uint256 dyadInVault = dyad.balanceOf(address(sDyad));
+        uint256 totalCollatValue = weth.balanceOf(address(this)).mulWad(ethPrice());
+
         uint256 newTotalDyadBorrowed = totalDyadBorrowed + dyadAmount;
 
         // totalDyadDeployed^2
