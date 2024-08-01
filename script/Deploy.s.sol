@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 
-import {Parameters}   from "../src/Parameters.sol";
+import {Parameters} from "../src/Parameters.sol";
 import {Lending} from "../src/core/Lending.sol";
 import {sDYAD} from "../src/core/sDYAD.sol";
 
@@ -13,21 +13,19 @@ import {IWETH} from "../src/interfaces/IWETH.sol";
 import {ITokenRenderer} from "../src/interfaces/ITokenRenderer.sol";
 
 contract Deploy is Script, Parameters {
-  function run() public {
-    vm.startBroadcast();  // ----------------------
+    function run() public {
+        vm.startBroadcast(); // ----------------------
 
-    sDYAD sDyad = new sDYAD();
+        sDYAD sDyad = new sDYAD();
 
-    Lending lending = new Lending(
-      IDyad(MAINNET_V2_DYAD), 
-      sDyad, 
-      IWETH(MAINNET_WETH), 
-      IAggregatorV3(MAINNET_WETH_ORACLE), 
-      ITokenRenderer(address(0)) // TODO: set renderer
-    );
+        Lending lending = new Lending(
+            IDyad(MAINNET_V2_DYAD),
+            sDyad,
+            IWETH(MAINNET_WETH),
+            IAggregatorV3(MAINNET_WETH_ORACLE),
+            ITokenRenderer(address(0)) // TODO: set renderer
+        );
 
-    vm.stopBroadcast();  // ----------------------------
-  }
+        vm.stopBroadcast(); // ----------------------------
+    }
 }
-
-

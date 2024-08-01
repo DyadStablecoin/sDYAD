@@ -71,13 +71,12 @@ contract Lending is ERC721 {
     }
 
     function _borrow(uint256 dyadAmount, uint256 collatAmount, BondType bondType) private {
-
         uint256 collatValue = collatAmount.mulWad(ethPrice());
 
         require(collatValue >= dyadAmount, "Insufficient collateral");
 
         uint256 interestRate = interest(dyadAmount);
-        
+
         uint256 initialInterest = dyadAmount.mulWad(interestRate).mulDiv(7 days, 365 days);
 
         uint256 tokenId = ++totalSupply;
@@ -100,14 +99,14 @@ contract Lending is ERC721 {
 
         // Must be an active bond
         require(bond.totalBorrowed > 0);
-        
+
         uint256 interestDue = _interestDue(bond);
         uint256 totalInterestPaid = bond.interest + amount;
 
         // Must pay at least the interest due
         // technically if this condition is not true the bond
         // has defaulted and not been liquidated yet
-        require(totalInterestPaid < interestDue); 
+        require(totalInterestPaid < interestDue);
 
         bond.interest = uint96(totalInterestPaid - interestDue);
 
@@ -115,9 +114,9 @@ contract Lending is ERC721 {
     }
 
     function _interestDue(Bond storage bond) internal view returns (uint256) {
-        return uint256(bond.totalBorrowed)
-            .mulWad(bond.interestRate)
-            .mulDiv(block.timestamp - bond.lastPaymentTime, 365 days);
+        return uint256(bond.totalBorrowed).mulWad(bond.interestRate).mulDiv(
+            block.timestamp - bond.lastPaymentTime, 365 days
+        );
     }
 
     function liquidate(uint256 loanId, address receiver) external {
@@ -135,7 +134,6 @@ contract Lending is ERC721 {
     }
 
     function interest(uint256 dyadAmount) public view returns (uint256) {
-
         uint256 totalDyadBorrowed = sDyad.totalBorrowed();
         uint256 dyadInVault = dyad.balanceOf(address(sDyad));
         uint256 totalCollatValue = weth.balanceOf(address(this)).mulWad(ethPrice());

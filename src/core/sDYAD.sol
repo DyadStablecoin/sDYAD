@@ -8,12 +8,12 @@ import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 
 contract sDYAD is ERC4626, UUPSUpgradeable, Ownable {
     address constant DYAD = 0xFd03723a9A3AbE0562451496a9a394D2C4bad4ab;
-    
+
     uint8 version;
     address loanManager;
 
     uint256 public totalBorrowed;
-    
+
     constructor() {
         version = type(uint8).max;
     }
