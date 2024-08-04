@@ -133,8 +133,7 @@ contract Lending is ERC721 {
         require(bond.totalBorrowed > 0);
         require(block.timestamp > bond.lastPaymentTime + INTEREST_PERIOD);
 
-        uint256 interestDue = _interestDue(bond);
-        uint256 totalDue = bond.totalBorrowed + interestDue - bond.interest;
+        uint256 totalDue = _payoffAmount(bond);
 
         dyad.transferFrom(msg.sender, address(this), totalDue);
         SafeTransferLib.safeTransfer(address(weth), receiver, bond.collat);
