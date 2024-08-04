@@ -107,7 +107,7 @@ contract Lending is ERC721 {
 
         if (amount > totalDue) {
             SafeTransferLib.safeTransferFrom(address(dyad),msg.sender, address(sDyad), totalDue);
-            SafeTransferLib.safeTransfer(address(weth), msg.sender, bond.collat);
+            SafeTransferLib.safeTransfer(address(weth), ownerOf(loanId), bond.collat);
             _burn(loanId);
             delete bondDetails[loanId];
         } else {
@@ -124,7 +124,7 @@ contract Lending is ERC721 {
             });
 
             SafeTransferLib.safeTransferFrom(address(dyad), msg.sender, address(sDyad), amount);
-            SafeTransferLib.safeTransfer(address(weth), msg.sender, proportionalCollatAmount);
+            SafeTransferLib.safeTransfer(address(weth), ownerOf(loanId), proportionalCollatAmount);
         }
     }
 
