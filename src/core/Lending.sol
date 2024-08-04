@@ -20,12 +20,13 @@ contract Lending is ERC721 {
     using SafeCast for int256;
 
     error StaleData();
+    error LoanDoesNotExist();
 
     uint256 public constant K = 0.1e18;
     uint256 public constant STALE_DATA_TIMEOUT = 90 minutes;
     uint256 public constant INTEREST_PERIOD = 30 days;
 
-    IAggregatorV3 public immutable oracle;
+    IAggregatorV3 public immutable ORACLE;
 
     IDyad public dyad;
     sDYAD public sDyad;
@@ -40,7 +41,7 @@ contract Lending is ERC721 {
         dyad = _dyad;
         sDyad = _sDyad;
         weth = _weth;
-        oracle = _oracle;
+        ORACLE = _oracle;
         renderer = _renderer;
     }
 
@@ -60,45 +61,26 @@ contract Lending is ERC721 {
         return renderer.tokenURI(id);
     }
 
-    function borrow(uint256 dyadAmount, BondType bondType) public payable {
+    /**************************************************************************
+        Public state changing methods
+    **************************************************************************/
+
+    function borrow(uint256 dyadAmount, BondType bondType) external payable {
         weth.deposit{value: msg.value}();
         _borrow(dyadAmount, msg.value, bondType);
     }
 
-    function borrow(uint256 dyadAmount, uint256 wethAmount, BondType bondType) public {
+    function borrow(uint256 dyadAmount, uint256 wethAmount, BondType bondType) external {
         SafeTransferLib.safeTransferFrom(address(weth), msg.sender, address(this), wethAmount);
         _borrow(dyadAmount, wethAmount, bondType);
-    }
-
-    function _borrow(uint256 dyadAmount, uint256 collatAmount, BondType bondType) private {
-        uint256 collatValue = collatAmount.mulWad(ethPrice());
-
-        require(collatValue >= dyadAmount, "Insufficient collateral");
-
-        uint256 interestRate = interest(dyadAmount);
-
-        uint256 initialInterest = dyadAmount.mulWad(interestRate).mulDiv(7 days, 365 days);
-
-        uint256 tokenId = ++totalSupply;
-
-        bondDetails[tokenId] = Bond({
-            collat: uint96(collatAmount),
-            totalBorrowed: uint96(dyadAmount + initialInterest),
-            interestRate: uint64(interestRate),
-            interest: uint96(initialInterest),
-            lastPaymentTime: uint40(block.timestamp),
-            bondType: bondType
-        });
-
-        sDyad.borrow(dyadAmount, msg.sender);
-        _mint(msg.sender, tokenId);
     }
 
     function payInterest(uint256 loanId, uint256 amount) external {
         Bond storage bond = bondDetails[loanId];
 
-        // Must be an active bond
-        require(bond.totalBorrowed > 0);
+        if (bond.totalBorrowed == 0) {
+            revert LoanDoesNotExist();
+        }
 
         uint256 interestDue = _interestDue(bond);
         uint256 totalInterestPaid = bond.interest + amount;
@@ -113,10 +95,37 @@ contract Lending is ERC721 {
         dyad.transferFrom(msg.sender, address(sDyad), amount);
     }
 
-    function _interestDue(Bond storage bond) internal view returns (uint256) {
-        return uint256(bond.totalBorrowed).mulWad(bond.interestRate).mulDiv(
-            block.timestamp - bond.lastPaymentTime, 365 days
-        );
+    function repay(uint256 loanId, uint256 amount) external {
+        Bond memory bond = bondDetails[loanId];
+
+        if (bond.totalBorrowed == 0) {
+            revert LoanDoesNotExist();
+        }
+
+        uint256 interestDue = _interestDue(bond);
+        uint256 totalDue = _payoffAmount(bond);
+
+        if (amount > totalDue) {
+            SafeTransferLib.safeTransferFrom(address(dyad),msg.sender, address(sDyad), totalDue);
+            SafeTransferLib.safeTransfer(address(weth), msg.sender, bond.collat);
+            _burn(loanId);
+            delete bondDetails[loanId];
+        } else {
+
+            uint256 proportionalCollatAmount = uint256(bond.collat).mulDiv(amount, totalDue);
+            
+            bondDetails[loanId] = Bond({
+                collat: uint96(bond.collat - proportionalCollatAmount),
+                totalBorrowed: uint96(bond.totalBorrowed - amount),
+                interestRate: bond.interestRate,
+                interest: uint96(bond.interest - interestDue),
+                lastPaymentTime: uint40(block.timestamp),
+                bondType: bond.bondType
+            });
+
+            SafeTransferLib.safeTransferFrom(address(dyad), msg.sender, address(sDyad), amount);
+            SafeTransferLib.safeTransfer(address(weth), msg.sender, proportionalCollatAmount);
+        }
     }
 
     function liquidate(uint256 loanId, address receiver) external {
@@ -133,12 +142,59 @@ contract Lending is ERC721 {
         delete bondDetails[loanId];
     }
 
-    function interest(uint256 dyadAmount) public view returns (uint256) {
+    /**************************************************************************
+        Internal state changing methods
+    **************************************************************************/
+
+    function _borrow(uint256 dyadAmount, uint256 collatAmount, BondType bondType) private {
+        uint256 collatValue = collatAmount.mulWad(_ethPrice());
+
+        require(collatValue >= dyadAmount, "Insufficient collateral");
+
+        uint256 rate = _interestRate(SafeCast.toInt256(dyadAmount));
+
+        uint256 initialInterest = dyadAmount.mulWad(rate).mulDiv(7 days, 365 days);
+
+        uint256 tokenId = ++totalSupply;
+
+        bondDetails[tokenId] = Bond({
+            collat: uint96(collatAmount),
+            totalBorrowed: uint96(dyadAmount + initialInterest),
+            interestRate: uint64(rate),
+            interest: uint96(initialInterest),
+            lastPaymentTime: uint40(block.timestamp),
+            bondType: bondType
+        });
+
+        sDyad.borrow(dyadAmount, msg.sender);
+        _mint(msg.sender, tokenId);
+    }
+
+    /**************************************************************************
+        Public view methods
+    **************************************************************************/
+
+    function interestRate() external view returns (uint256) {
+        return _interestRate(0);
+    }
+
+    function payoffAmount(uint256 loanId) external view returns (uint256) {
+        Bond memory bond = bondDetails[loanId];
+        if (bond.totalBorrowed == 0) revert LoanDoesNotExist();
+
+        return _payoffAmount(bond);
+    }
+
+    /**************************************************************************
+        Internal view methods
+    **************************************************************************/
+
+    function _interestRate(int256 dyadAmount) internal view returns (uint256) {
         uint256 totalDyadBorrowed = sDyad.totalBorrowed();
         uint256 dyadInVault = dyad.balanceOf(address(sDyad));
-        uint256 totalCollatValue = weth.balanceOf(address(this)).mulWad(ethPrice());
+        uint256 totalCollatValue = weth.balanceOf(address(this)).mulWad(_ethPrice());
 
-        uint256 newTotalDyadBorrowed = totalDyadBorrowed + dyadAmount;
+        uint256 newTotalDyadBorrowed = SafeCast.toUint256(SafeCast.toInt256(totalDyadBorrowed) + dyadAmount);
 
         // totalDyadDeployed^2
         uint256 totalDyadBorrowdSquared = newTotalDyadBorrowed.mulWad(newTotalDyadBorrowed);
@@ -153,8 +209,30 @@ contract Lending is ERC721 {
         return result.divWad(totalCollatValue);
     }
 
-    function ethPrice() public view returns (uint256) {
-        (, int256 answer,, uint256 updatedAt,) = oracle.latestRoundData();
+    function _payoffAmount(Bond memory bond) internal view returns (uint256 totalDue) {
+        totalDue = bond.totalBorrowed + _interestDue(bond);
+        if (bond.bondType == BondType.FixedPrincipal) {
+            totalDue -= bond.interest;
+        } else {
+            // get the interest rate after repayment
+            uint256 newInterestRate = _interestRate(SafeCast.toInt256(bond.totalBorrowed) * -1);
+            // repay amount is inversely proportional to the change in interest rate since origination
+            if (bond.interestRate > newInterestRate) {
+                totalDue += uint256(bond.totalBorrowed).mulDiv(newInterestRate - bond.interestRate, bond.interestRate);
+            } else {
+                totalDue -= uint256(bond.totalBorrowed).mulDiv(bond.interestRate - newInterestRate, bond.interestRate);
+            }
+        }
+    }
+
+    function _interestDue(Bond memory bond) internal view returns (uint256) {
+        return uint256(bond.totalBorrowed).mulWad(bond.interestRate).mulDiv(
+            block.timestamp - bond.lastPaymentTime, 365 days
+        );
+    }
+
+    function _ethPrice() public view returns (uint256) {
+        (, int256 answer,, uint256 updatedAt,) = ORACLE.latestRoundData();
         if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData();
         return answer.toUint256();
     }
