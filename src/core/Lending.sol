@@ -231,7 +231,7 @@ contract Lending is ERC721 {
         );
     }
 
-    function _ethPrice() public view returns (uint256) {
+    function _ethPrice() internal view returns (uint256) {
         (, int256 answer,, uint256 updatedAt,) = ORACLE.latestRoundData();
         if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData();
         return answer.toUint256();
